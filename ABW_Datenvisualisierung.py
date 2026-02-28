@@ -15,7 +15,8 @@ Annahme zu Tabellen/Spalten:
 - nodes_history_env(timestamp, value, ID, type) – für tempc, hum, co2, light
 
 Credential-Handling:
-- ⚠️ Wie gewünscht **im Klartext im Code** hinterlegt (siehe Konstanten DB_USER/DB_PASS/DB_HOST/DB_PORT/DB_NAME)
+- lokale Datei `db_config.local.json` bzw. `/app/data/db_config.local.json`
+- alternativ Umgebungsvariablen `ABW_DB_*`
 """
 
 import json
@@ -28,7 +29,7 @@ import numpy as np
 import plotly.express as px
 import streamlit as st
 from sqlalchemy import create_engine, text
-from sqlalchemy.engine import Engine
+from sqlalchemy.engine import Engine, URL
 from time import perf_counter
 
 # Optional: lokaler Cache (DuckDB)
@@ -43,21 +44,50 @@ except Exception:
 # ============================
 st.set_page_config(page_title="Sensor Explorer", layout="wide")
 
-# --- ⚠️ DB-Zugang im Klartext (wie gewünscht)
+# --- DB-Zugang aus lokaler Datei oder Umgebungsvariablen
 APP_DIR = os.path.dirname(__file__) if '__file__' in globals() else os.getcwd()
+DATA_DIR = os.path.join(APP_DIR, "data")
 CACHE_DB_PATH = os.path.join(APP_DIR, "sensor_cache.duckdb")
-DB_CONFIG_PATH = os.path.join(APP_DIR, "db_config.local.json")
+DB_CONFIG_CANDIDATES = [
+    os.path.join(DATA_DIR, "db_config.local.json"),
+    os.path.join(APP_DIR, "db_config.local.json"),
+]
+
+
+def get_db_config_path() -> str:
+    for path in DB_CONFIG_CANDIDATES:
+        if os.path.exists(path):
+            return path
+    return DB_CONFIG_CANDIDATES[0]
 
 
 def load_local_db_config() -> dict:
-    if not os.path.exists(DB_CONFIG_PATH):
-        return {}
-    try:
-        with open(DB_CONFIG_PATH, "r", encoding="utf-8") as fh:
-            data = json.load(fh)
-        return data if isinstance(data, dict) else {}
-    except Exception:
-        return {}
+    for path in DB_CONFIG_CANDIDATES:
+        if not os.path.exists(path):
+            continue
+        try:
+            with open(path, "r", encoding="utf-8") as fh:
+                data = json.load(fh)
+            return data if isinstance(data, dict) else {}
+        except Exception:
+            return {}
+    return {}
+
+
+def save_local_db_config(settings: dict) -> str:
+    path = get_db_config_path()
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    payload = {
+        "user": str(settings.get("user", "")).strip(),
+        "password": str(settings.get("password", "")).strip(),
+        "host": str(settings.get("host", "")).strip(),
+        "port": str(settings.get("port", "")).strip(),
+        "name": str(settings.get("name", "")).strip(),
+    }
+    with open(path, "w", encoding="utf-8") as fh:
+        json.dump(payload, fh, indent=2)
+        fh.write("\n")
+    return path
 
 
 def get_db_settings() -> dict:
@@ -76,12 +106,97 @@ def get_missing_db_settings() -> List[str]:
     return [key for key, value in settings.items() if not value]
 
 
+def get_env_db_overrides() -> List[str]:
+    mapping = {
+        "user": "ABW_DB_USER",
+        "password": "ABW_DB_PASS",
+        "host": "ABW_DB_HOST",
+        "port": "ABW_DB_PORT",
+        "name": "ABW_DB_NAME",
+    }
+    return [key for key, env_name in mapping.items() if os.getenv(env_name, "").strip()]
+
+
 def is_db_configured() -> bool:
     return not get_missing_db_settings()
 
 
 def get_empty_meta() -> pd.DataFrame:
     return pd.DataFrame(columns=["id", "vanity", "building", "floor", "area", "nodeTypeName"])
+
+
+def build_db_url(settings: dict) -> URL:
+    return URL.create(
+        "postgresql+psycopg2",
+        username=settings["user"],
+        password=settings["password"],
+        host=settings["host"],
+        port=int(settings["port"]),
+        database=settings["name"],
+    )
+
+
+def test_db_connection(settings: dict) -> tuple[bool, str]:
+    missing = [key for key, value in settings.items() if not str(value).strip()]
+    if missing:
+        return False, "Fehlende Felder: " + ", ".join(missing)
+    try:
+        engine = create_engine(
+            build_db_url(settings),
+            connect_args={"options": "-c statement_timeout=0"},
+            pool_pre_ping=True,
+        )
+        with engine.connect() as conn:
+            result = conn.execute(text("SELECT 1")).scalar()
+        engine.dispose()
+        return result == 1, "Verbindung erfolgreich."
+    except Exception as exc:
+        return False, str(exc)
+
+
+def get_request_header(name: str, default: str = "") -> str:
+    try:
+        headers = st.context.headers
+        value = headers.get(name)
+        if value is not None:
+            return str(value)
+        for key, current_value in headers.items():
+            if str(key).lower() == name.lower():
+                return str(current_value)
+    except Exception:
+        return default
+    return default
+
+
+def parse_group_values(raw_value: str) -> List[str]:
+    raw_value = (raw_value or "").strip()
+    if not raw_value:
+        return []
+    try:
+        parsed = json.loads(raw_value)
+        if isinstance(parsed, list):
+            return sorted({str(item).strip() for item in parsed if str(item).strip()})
+    except Exception:
+        pass
+    normalized = raw_value
+    for sep in [";", "|", "\n"]:
+        normalized = normalized.replace(sep, ",")
+    return sorted({item.strip() for item in normalized.split(",") if item.strip()})
+
+
+def get_auth_context() -> dict:
+    username = get_request_header("X-Authentik-Username")
+    email = get_request_header("X-Authentik-Email")
+    name = get_request_header("X-Authentik-Name")
+    groups = parse_group_values(get_request_header("X-Authentik-Groups"))
+    return {
+        "username": username,
+        "email": email,
+        "name": name,
+        "groups": groups,
+        "is_authenticated": bool(username or email or name),
+        "is_admin": "abw-admin" in groups,
+    }
 
 # --- Helper: DB Engine
 @st.cache_resource(show_spinner=False)
@@ -94,12 +209,8 @@ def get_engine() -> Engine:
             + ", ".join(missing)
             + ". Nutze Umgebungsvariablen ABW_DB_* oder db_config.local.json."
         )
-    url = (
-        f"postgresql+psycopg2://{settings['user']}:{settings['password']}"
-        f"@{settings['host']}:{settings['port']}/{settings['name']}"
-    )
     connect_args = {"options": "-c statement_timeout=0"}
-    return create_engine(url, connect_args=connect_args, pool_pre_ping=True)
+    return create_engine(build_db_url(settings), connect_args=connect_args, pool_pre_ping=True)
 
 # ===============
 # Lokaler Cache (DuckDB)
@@ -497,6 +608,8 @@ def run_self_tests() -> pd.DataFrame:
 st.session_state.setdefault("use_local_cache", False)
 st.session_state.setdefault("use_cache_only", False)
 
+auth_ctx = get_auth_context()
+
 st.title("🔎 Sensor Explorer — SQL → Filters → Charts")
 if not is_db_configured():
     st.warning(
@@ -507,7 +620,12 @@ meta = load_meta()
 
 c_top1, c_top2, c_top3 = st.columns([2,1,1])
 with c_top1:
-    st.caption("Select metadata & date range → data loads live from Postgres.")
+    if auth_ctx["is_authenticated"]:
+        identity = auth_ctx["email"] or auth_ctx["username"] or auth_ctx["name"]
+        groups_text = ", ".join(auth_ctx["groups"]) if auth_ctx["groups"] else "keine Gruppen"
+        st.caption(f"Angemeldet als {identity} | Gruppen: {groups_text}")
+    else:
+        st.caption("Select metadata & date range → data loads live from Postgres.")
 with c_top2:
     if st.button("🔁 Clear app cache", help="Invalidate cached meta/queries in Streamlit"):
         load_meta.clear(); load_timeseries.clear()
@@ -522,6 +640,60 @@ with c_top3:
 # ============================
 with st.sidebar:
     st.header("Cache & Filters")
+    with st.expander("Admin", expanded=auth_ctx["is_admin"]):
+        current_config_path = get_db_config_path()
+        env_overrides = get_env_db_overrides()
+        if auth_ctx["is_authenticated"]:
+            st.caption(
+                "Angemeldet als "
+                + (auth_ctx["email"] or auth_ctx["username"] or auth_ctx["name"])
+            )
+        if env_overrides:
+            st.warning(
+                "Umgebungsvariablen überschreiben aktuell diese Felder: "
+                + ", ".join(env_overrides)
+            )
+        if not auth_ctx["is_admin"]:
+            st.info("DB-Konfiguration ist nur für Mitglieder der Gruppe `abw-admin` sichtbar.")
+        else:
+            current_cfg = load_local_db_config()
+            with st.form("db_config_form", clear_on_submit=False):
+                db_user = st.text_input("DB User", value=str(current_cfg.get("user", "")))
+                db_password = st.text_input(
+                    "DB Passwort", value=str(current_cfg.get("password", "")), type="password"
+                )
+                db_host = st.text_input("DB Host", value=str(current_cfg.get("host", "")))
+                db_port = st.text_input("DB Port", value=str(current_cfg.get("port", "5432")))
+                db_name = st.text_input("DB Name", value=str(current_cfg.get("name", "postgres")))
+                test_clicked = st.form_submit_button("Verbindung testen")
+                save_clicked = st.form_submit_button("Konfiguration speichern")
+
+            draft_settings = {
+                "user": db_user,
+                "password": db_password,
+                "host": db_host,
+                "port": db_port,
+                "name": db_name,
+            }
+            if test_clicked:
+                ok, message = test_db_connection(draft_settings)
+                if ok:
+                    st.success(message)
+                else:
+                    st.error(message)
+            if save_clicked:
+                ok, message = test_db_connection(draft_settings)
+                if not ok:
+                    st.error("Speichern abgebrochen. " + message)
+                else:
+                    saved_path = save_local_db_config(draft_settings)
+                    get_engine.clear()
+                    load_meta.clear()
+                    load_timeseries.clear()
+                    st.success(f"Konfiguration gespeichert: {saved_path}")
+                    st.rerun()
+            st.caption(f"Aktiver Konfigurationspfad: {current_config_path}")
+
     # Local cache switch
     use_local_cache = st.checkbox(
         "⚡ Use local cache (DuckDB)", value=False,

@@ -6,7 +6,7 @@ services:
     container_name: abw-app
     restart: unless-stopped
     volumes:
-      - ./data/db_config.local.json:/app/db_config.local.json:ro
+      - ./data:/app/data
     networks:
       - web
 

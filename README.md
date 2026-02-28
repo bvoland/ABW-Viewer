@@ -102,11 +102,18 @@ Die produktive DB-Konfiguration wird nicht committed, sondern serverseitig als:
 
 bereitgestellt.
 
+Die ABW-App liest diese Datei im Container standardmäßig aus:
+
+- `/app/data/db_config.local.json`
+
+Zusätzlich ist `abw.vobenconsulting.com` über Authentik per Forward Auth abgesichert.
+
 ## Konfiguration
 
 Die Datenbankzugänge liegen nicht mehr im versionierten Code. Es gibt zwei unterstützte Wege:
 
 - lokale Datei `db_config.local.json` auf Basis von `db_config.local.json.example`
+- serverseitige Datei `deploy/abw/data/db_config.local.json`
 - Umgebungsvariablen
 
 Unterstützte Umgebungsvariablen:
@@ -118,6 +125,26 @@ Unterstützte Umgebungsvariablen:
 - `ABW_DB_NAME`
 
 Umgebungsvariablen überschreiben Werte aus `db_config.local.json`.
+
+## Authentifizierung und Rollen
+
+Das Deployment ist auf zentrale Authentifizierung über Authentik ausgelegt:
+
+- `auth.vobenconsulting.com`: zentrales Login, Nutzerverwaltung, 2FA
+- `abw.vobenconsulting.com`: per Reverse Proxy mit Authentik abgesichert
+
+Die App liest Authentik-Header wie `X-Authentik-Username`, `X-Authentik-Email` und `X-Authentik-Groups`.
+
+Aktuell ist innerhalb der App vorgesehen:
+
+- jede authentifizierte Person kann die App verwenden
+- nur Mitglieder der Gruppe `abw-admin` sehen das Admin-Menü für die DB-Konfiguration
+
+Im Admin-Menü können:
+
+- DB-Zugangsdaten getestet werden
+- DB-Zugangsdaten serverseitig gespeichert werden
+- Streamlit- und DB-Caches nach Konfigurationsänderungen neu geladen werden
 
 ## Datenmodell-Annahmen
 
