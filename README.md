@@ -83,7 +83,7 @@ Nicht mit `python ABW_Datenvisualisierung.py` starten, da die Datei als Streamli
 
 ## Server-Deployment
 
-Für den Serverbetrieb ist eine schlanke Docker-Struktur vorgesehen:
+Für den Serverbetrieb ist eine schlanke Docker-Struktur vorgesehen. Das aktuelle Setup verwendet die Domain `abw.vobenconsulting.com`:
 
 - Caddy als Reverse Proxy
 - ein eigener App-Container für ABW

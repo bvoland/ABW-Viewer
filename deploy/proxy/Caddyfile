@@ -1,4 +1,4 @@
-abw.vobenconsulting.org {
+abw.vobenconsulting.com {
     encode gzip zstd
     reverse_proxy abw-app:8501
 }
