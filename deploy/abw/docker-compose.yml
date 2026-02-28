@@ -7,7 +7,6 @@ services:
     restart: unless-stopped
     volumes:
       - ./data/db_config.local.json:/app/db_config.local.json:ro
-      - ./data/sensor_cache.duckdb:/app/sensor_cache.duckdb
     networks:
       - web
 
