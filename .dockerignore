@@ -1,0 +1,16 @@
+.git
+.gitignore
+.venv
+.vscode
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+
+portable_python
+wheelhouse
+legacy
+
+sensor_cache.duckdb
+run_log.txt
+db_config.local.json

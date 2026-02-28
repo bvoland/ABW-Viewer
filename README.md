@@ -33,6 +33,8 @@ und stellt diese gefiltert als Diagramme, Kennzahlen und CSV-Export bereit.
 - `run_app_portable.cmd`: Start mit portablem Python
 - `run_hidden_portable.vbs`: versteckter Start des portablen Launchers
 - `db_config.local.json.example`: Vorlage für lokale DB-Zugangsdaten
+- `Dockerfile`: Container-Build für Server-Deployment
+- `deploy/`: Reverse-Proxy- und Compose-Dateien für Serverbetrieb
 - `requirements.txt`: Python-Abhängigkeiten
 - `sensor_cache.duckdb`: lokaler Cache, wird zur Laufzeit befüllt
 - `legacy/`: archivierte App-Zwischenstände
@@ -78,6 +80,26 @@ streamlit run "ABW_Datenvisualisierung.py"
 ```
 
 Nicht mit `python ABW_Datenvisualisierung.py` starten, da die Datei als Streamlit-App ausgelegt ist.
+
+## Server-Deployment
+
+Für den Serverbetrieb ist eine schlanke Docker-Struktur vorgesehen:
+
+- Caddy als Reverse Proxy
+- ein eigener App-Container für ABW
+- gemeinsames Docker-Netzwerk `web` für weitere Apps
+
+Relevante Dateien:
+
+- `deploy/proxy/docker-compose.yml`
+- `deploy/proxy/Caddyfile`
+- `deploy/abw/docker-compose.yml`
+
+Die produktive DB-Konfiguration wird nicht committed, sondern serverseitig als:
+
+- `deploy/abw/data/db_config.local.json`
+
+bereitgestellt.
 
 ## Konfiguration
 
