@@ -94,6 +94,7 @@ Relevante Dateien:
 - `deploy/proxy/docker-compose.yml`
 - `deploy/proxy/Caddyfile`
 - `deploy/abw/docker-compose.yml`
+- `deploy/auth/docker-compose.yml`
 
 Die produktive DB-Konfiguration wird nicht committed, sondern serverseitig als:
 

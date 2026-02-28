@@ -1,3 +1,8 @@
+auth.vobenconsulting.com {
+    encode gzip zstd
+    reverse_proxy authentik-server:9000
+}
+
 abw.vobenconsulting.com {
     encode gzip zstd
     reverse_proxy abw-app:8501
