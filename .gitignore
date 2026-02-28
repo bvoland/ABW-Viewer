@@ -1,0 +1,16 @@
+.venv/
+.vscode/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+
+portable_python/
+wheelhouse/
+
+sensor_cache.duckdb
+run_log.txt
+
+.DS_Store
+Thumbs.db
