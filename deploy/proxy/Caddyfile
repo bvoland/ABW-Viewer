@@ -5,9 +5,11 @@ auth.vobenconsulting.com {
 
 abw.vobenconsulting.com {
     encode gzip zstd
-    route {
+    handle /outpost.goauthentik.io/* {
         reverse_proxy /outpost.goauthentik.io/* http://authentik-server:9000
+    }
 
+    handle {
         forward_auth http://authentik-server:9000 {
             uri /outpost.goauthentik.io/auth/caddy
             copy_headers X-Authentik-Username X-Authentik-Groups X-Authentik-Entitlements X-Authentik-Email X-Authentik-Name X-Authentik-Uid X-Authentik-Jwt X-Authentik-Meta-Jwks X-Authentik-Meta-Outpost X-Authentik-Meta-Provider X-Authentik-Meta-App X-Authentik-Meta-Version
