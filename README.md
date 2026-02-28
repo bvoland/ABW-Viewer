@@ -2,7 +2,7 @@
 
 Streamlit-App zur Analyse von Sensordaten aus PostgreSQL mit optionalem lokalem DuckDB-Cache.
 
-Der aktuell genutzte Einstiegspunkt ist `ABW_Datenvisualisierung.py`. Die Dateien `ABW_Datenvisualisierung_v1.py`, `ABW_Datenvisualisierung_v2.py` und `ABW_Datenvisualisierung_V3.py` sind historische Zwischenstände und werden von den Startskripten nicht verwendet.
+Der aktuell genutzte Einstiegspunkt ist `ABW_Datenvisualisierung.py`. Historische Zwischenstände liegen im Ordner `legacy/` und werden von den Startskripten nicht verwendet.
 
 ## Zweck
 
@@ -32,8 +32,10 @@ und stellt diese gefiltert als Diagramme, Kennzahlen und CSV-Export bereit.
 - `run_hidden.vbs`: Start ohne sichtbare Konsole
 - `run_app_portable.cmd`: Start mit portablem Python
 - `run_hidden_portable.vbs`: versteckter Start des portablen Launchers
+- `db_config.local.json.example`: Vorlage für lokale DB-Zugangsdaten
 - `requirements.txt`: Python-Abhängigkeiten
 - `sensor_cache.duckdb`: lokaler Cache, wird zur Laufzeit befüllt
+- `legacy/`: archivierte App-Zwischenstände
 
 ## Voraussetzungen
 
@@ -79,7 +81,12 @@ Nicht mit `python ABW_Datenvisualisierung.py` starten, da die Datei als Streamli
 
 ## Konfiguration
 
-Die Datenbankzugänge sind im Code mit bestehenden Defaultwerten hinterlegt. Zusätzlich können folgende Umgebungsvariablen verwendet werden:
+Die Datenbankzugänge liegen nicht mehr im versionierten Code. Es gibt zwei unterstützte Wege:
+
+- lokale Datei `db_config.local.json` auf Basis von `db_config.local.json.example`
+- Umgebungsvariablen
+
+Unterstützte Umgebungsvariablen:
 
 - `ABW_DB_USER`
 - `ABW_DB_PASS`
@@ -87,7 +94,7 @@ Die Datenbankzugänge sind im Code mit bestehenden Defaultwerten hinterlegt. Zus
 - `ABW_DB_PORT`
 - `ABW_DB_NAME`
 
-Die Umgebungsvariablen überschreiben die Defaultwerte.
+Umgebungsvariablen überschreiben Werte aus `db_config.local.json`.
 
 ## Datenmodell-Annahmen
 
@@ -118,9 +125,9 @@ Wenn `Use cache only (no DB fetch)` aktiviert ist:
 ## Bekannte Besonderheiten
 
 - Die App mischt derzeit deutsche Kommentare mit englischer UI. Das ist funktional unkritisch, aber dokumentationsrelevant.
-- Die historischen Versionen `v1`, `v2`, `V3` liegen noch im Projekt und können bei der Wartung verwirren.
+- Historische Versionen sind nur noch als Referenz unter `legacy/` abgelegt.
 - Die Datei `sensor_cache.duckdb` kann sehr groß werden und gehört nicht in ein Git-Repository.
-- Klartext-Credentials sind für lokale Nutzung bequem, aber für produktive Nutzung ungeeignet.
+- Lokale DB-Zugangsdaten gehören in `db_config.local.json` oder in Umgebungsvariablen, nicht ins Repository.
 
 ## Empfohlener Git-Umfang
 
@@ -131,6 +138,7 @@ Ins Repository sollten nur Quelltexte und Projektdateien aufgenommen werden. Nic
 - `wheelhouse/`
 - `sensor_cache.duckdb`
 - `run_log.txt`
+- `db_config.local.json`
 - `__pycache__/`
 
 ## Änderungsstand dieser Bereinigung
@@ -143,3 +151,5 @@ Im Rahmen der ersten Bereinigung wurden folgende Inkonsistenzen adressiert:
 - `run_app_portable.cmd` auf `requirements.txt` umgestellt
 - `Use cache only` so korrigiert, dass kein unbeabsichtigter DB-Fallback mehr erfolgt
 - Self-Test für `nodes_hierarchy` an die tatsächlich unterstützten Alias-Spalten angepasst
+- DB-Credentials aus dem versionierten Code entfernt und auf lokale Konfiguration umgestellt
+- historische Dateiversionen in `legacy/` archiviert

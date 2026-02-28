@@ -11,6 +11,7 @@ wheelhouse/
 
 sensor_cache.duckdb
 run_log.txt
+db_config.local.json
 
 .DS_Store
 Thumbs.db

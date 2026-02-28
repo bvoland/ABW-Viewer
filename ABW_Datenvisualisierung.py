@@ -18,6 +18,7 @@ Credential-Handling:
 - ⚠️ Wie gewünscht **im Klartext im Code** hinterlegt (siehe Konstanten DB_USER/DB_PASS/DB_HOST/DB_PORT/DB_NAME)
 """
 
+import json
 import os
 import datetime as dt
 from typing import List
@@ -43,26 +44,66 @@ except Exception:
 st.set_page_config(page_title="Sensor Explorer", layout="wide")
 
 # --- ⚠️ DB-Zugang im Klartext (wie gewünscht)
-DB_USER = os.getenv("ABW_DB_USER", "python_writer")
-DB_PASS = os.getenv("ABW_DB_PASS", "#writeonlye888!")
-DB_HOST = os.getenv("ABW_DB_HOST", "iot-abw-dev-postgessrv.postgres.database.azure.com")
-DB_PORT = os.getenv("ABW_DB_PORT", "5432")
-DB_NAME = os.getenv("ABW_DB_NAME", "postgres")
+APP_DIR = os.path.dirname(__file__) if '__file__' in globals() else os.getcwd()
+CACHE_DB_PATH = os.path.join(APP_DIR, "sensor_cache.duckdb")
+DB_CONFIG_PATH = os.path.join(APP_DIR, "db_config.local.json")
+
+
+def load_local_db_config() -> dict:
+    if not os.path.exists(DB_CONFIG_PATH):
+        return {}
+    try:
+        with open(DB_CONFIG_PATH, "r", encoding="utf-8") as fh:
+            data = json.load(fh)
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+def get_db_settings() -> dict:
+    local_cfg = load_local_db_config()
+    return {
+        "user": os.getenv("ABW_DB_USER", str(local_cfg.get("user", "")).strip()),
+        "password": os.getenv("ABW_DB_PASS", str(local_cfg.get("password", "")).strip()),
+        "host": os.getenv("ABW_DB_HOST", str(local_cfg.get("host", "")).strip()),
+        "port": os.getenv("ABW_DB_PORT", str(local_cfg.get("port", "")).strip()),
+        "name": os.getenv("ABW_DB_NAME", str(local_cfg.get("name", "")).strip()),
+    }
+
+
+def get_missing_db_settings() -> List[str]:
+    settings = get_db_settings()
+    return [key for key, value in settings.items() if not value]
+
+
+def is_db_configured() -> bool:
+    return not get_missing_db_settings()
+
+
+def get_empty_meta() -> pd.DataFrame:
+    return pd.DataFrame(columns=["id", "vanity", "building", "floor", "area", "nodeTypeName"])
 
 # --- Helper: DB Engine
 @st.cache_resource(show_spinner=False)
 def get_engine() -> Engine:
-    url = f"postgresql+psycopg2://{DB_USER}:{DB_PASS}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
+    settings = get_db_settings()
+    missing = [key for key, value in settings.items() if not value]
+    if missing:
+        raise RuntimeError(
+            "DB-Konfiguration unvollstaendig. Fehlende Felder: "
+            + ", ".join(missing)
+            + ". Nutze Umgebungsvariablen ABW_DB_* oder db_config.local.json."
+        )
+    url = (
+        f"postgresql+psycopg2://{settings['user']}:{settings['password']}"
+        f"@{settings['host']}:{settings['port']}/{settings['name']}"
+    )
     connect_args = {"options": "-c statement_timeout=0"}
     return create_engine(url, connect_args=connect_args, pool_pre_ping=True)
-
-engine = get_engine()
 
 # ===============
 # Lokaler Cache (DuckDB)
 # ===============
-CACHE_DB_PATH = os.path.join(os.path.dirname(__file__) if '__file__' in globals() else os.getcwd(), "sensor_cache.duckdb")
-
 def cache_conn():
     if not HAVE_DUCKDB:
         raise RuntimeError("DuckDB nicht installiert. Bitte 'pip install duckdb' ausführen.")
@@ -167,7 +208,10 @@ def load_meta() -> pd.DataFrame:
     Pflicht/gewünscht: nodeTypeName (aus einer der Kandidaten-Spalten)
     Optional: building, floor, area, vanity
     """
-    use_cache = st.session_state.get("use_local_cache", False)
+    use_cache = (
+        st.session_state.get("use_local_cache", False)
+        or st.session_state.get("use_cache_only", False)
+    )
     if use_cache and HAVE_DUCKDB:
         try:
             con = cache_conn()
@@ -183,6 +227,14 @@ def load_meta() -> pd.DataFrame:
             pass  # fällt auf DB-Load zurück
 
     # Kandidaten-Spalten für nodeTypeName (in DB können Namensvarianten existieren)
+    if st.session_state.get("use_cache_only"):
+        return get_empty_meta()
+
+    try:
+        engine = get_engine()
+    except RuntimeError:
+        return get_empty_meta()
+
     candidates = [
         '"nodeTypeName"', 'nodeTypeName', '"nodetypename"', 'nodetypename',
         '"node_type_name"', 'node_type_name', '"nodetype"', 'nodetype', '"type"', 'type'
@@ -300,6 +352,11 @@ def load_timeseries(
     if st.session_state.get("use_cache_only"):
         return pd.DataFrame(columns=["timestamp","value","ID","type"])
 
+    try:
+        engine = get_engine()
+    except RuntimeError:
+        return pd.DataFrame(columns=["timestamp","value","ID","type"])
+
     # ---------- Postgres laden (mit ANY() Arrays) ----------
     env_channels = {"tempc","hum","co2","light"}
     hist_channels = {"occupancy","motion"}
@@ -358,6 +415,16 @@ def load_timeseries(
 def run_self_tests() -> pd.DataFrame:
     """Führt einfache Integrations-Checks aus und liefert eine Ergebnis-Tabelle."""
     checks = []
+    try:
+        engine = get_engine()
+    except RuntimeError as e:
+        return pd.DataFrame(
+            [
+                ("DB-Konfiguration", False, str(e)),
+                ("Hinweis", False, f"Erwartete Datei: {DB_CONFIG_PATH}"),
+            ],
+            columns=["Check","OK","Details"],
+        )
     # 1) DB-Verbindung
     try:
         with engine.connect() as conn:
@@ -427,7 +494,15 @@ def run_self_tests() -> pd.DataFrame:
 # UI — Header
 # ============================
 
+st.session_state.setdefault("use_local_cache", False)
+st.session_state.setdefault("use_cache_only", False)
+
 st.title("🔎 Sensor Explorer — SQL → Filters → Charts")
+if not is_db_configured():
+    st.warning(
+        "DB-Konfiguration fehlt. Lege `db_config.local.json` an oder setze "
+        "`ABW_DB_USER`, `ABW_DB_PASS`, `ABW_DB_HOST`, `ABW_DB_PORT`, `ABW_DB_NAME`."
+    )
 meta = load_meta()
 
 c_top1, c_top2, c_top3 = st.columns([2,1,1])
@@ -702,12 +777,22 @@ id_list = f["id"].tolist()
 st.caption(f"Selected sensors: {len(id_list)}")
 
 start_dt = dt.datetime.combine(date_from, from_time)
-end_dt   = dt.datetime.combine(date_to, to_time)
+end_dt   = dt.datetime.combine(date_to, to_time) + dt.timedelta(minutes=1)
 
 # ============================
 # Query & Anzeige
 # ============================
 if run:
+    if not is_db_configured() and not (
+        st.session_state.get("use_local_cache")
+        or st.session_state.get("use_cache_only")
+    ):
+        st.error(
+            "Keine DB-Konfiguration gefunden. Ohne konfigurierten Datenbankzugang "
+            "sind nur bereits lokal gecachte Daten nutzbar."
+        )
+        st.stop()
+
     if not id_list:
         st.warning("No sensors found for the selected filters.")
         st.stop()
@@ -802,11 +887,11 @@ if run:
     with k1:
         st.metric("Data points", f"{len(df):,}".replace(",","."))  # DE-Decimal hack
     with k2:
-        st.metric("Sensors", f["id"].nunique())
+        st.metric("Sensors", df["ID"].nunique())
     with k3:
         st.metric("Channels", len(set(df["type"].unique().tolist())))
     with k4:
-        st.metric("Date range", f"{start_dt:%Y-%m-%d} → {end_dt:%Y-%m-%d}")
+        st.metric("Date range", f"{df['timestamp'].min():%Y-%m-%d} → {df['timestamp'].max():%Y-%m-%d}")
 
     # Memory footprint of the loaded dataframe in Python
     try:
