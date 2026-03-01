@@ -47,7 +47,8 @@ st.set_page_config(page_title="Sensor Explorer", layout="wide")
 # --- DB-Zugang aus lokaler Datei oder Umgebungsvariablen
 APP_DIR = os.path.dirname(__file__) if '__file__' in globals() else os.getcwd()
 DATA_DIR = os.path.join(APP_DIR, "data")
-CACHE_DB_PATH = os.path.join(APP_DIR, "sensor_cache.duckdb")
+LEGACY_CACHE_DB_PATH = os.path.join(APP_DIR, "sensor_cache.duckdb")
+CACHE_DB_PATH = os.path.join(DATA_DIR, "sensor_cache.duckdb")
 DB_CONFIG_CANDIDATES = [
     os.path.join(DATA_DIR, "db_config.local.json"),
     os.path.join(APP_DIR, "db_config.local.json"),
@@ -59,6 +60,20 @@ def get_db_config_path() -> str:
         if os.path.exists(path):
             return path
     return DB_CONFIG_CANDIDATES[0]
+
+
+def ensure_data_dir() -> None:
+    os.makedirs(DATA_DIR, exist_ok=True)
+
+
+def migrate_legacy_cache() -> None:
+    ensure_data_dir()
+    if os.path.exists(CACHE_DB_PATH) or not os.path.exists(LEGACY_CACHE_DB_PATH):
+        return
+    try:
+        os.replace(LEGACY_CACHE_DB_PATH, CACHE_DB_PATH)
+    except OSError:
+        pass
 
 
 def load_local_db_config() -> dict:
@@ -218,6 +233,7 @@ def get_engine() -> Engine:
 def cache_conn():
     if not HAVE_DUCKDB:
         raise RuntimeError("DuckDB nicht installiert. Bitte 'pip install duckdb' ausführen.")
+    ensure_data_dir()
     return duckdb.connect(CACHE_DB_PATH)
 
 def ensure_cache_schema():
@@ -252,6 +268,7 @@ def ensure_cache_schema():
     """)
     con.close()
 
+migrate_legacy_cache()
 ensure_cache_schema()
 
 def clear_cache():

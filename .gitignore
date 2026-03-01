@@ -10,6 +10,8 @@ portable_python/
 wheelhouse/
 
 sensor_cache.duckdb
+data/sensor_cache.duckdb
+deploy/abw/data/sensor_cache.duckdb
 run_log.txt
 db_config.local.json
 deploy/abw/data/db_config.local.json

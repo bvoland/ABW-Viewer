@@ -36,7 +36,7 @@ und stellt diese gefiltert als Diagramme, Kennzahlen und CSV-Export bereit.
 - `Dockerfile`: Container-Build für Server-Deployment
 - `deploy/`: Reverse-Proxy- und Compose-Dateien für Serverbetrieb
 - `requirements.txt`: Python-Abhängigkeiten
-- `sensor_cache.duckdb`: lokaler Cache, wird zur Laufzeit befüllt
+- `data/sensor_cache.duckdb`: lokaler Cache, wird zur Laufzeit befüllt
 - `legacy/`: archivierte App-Zwischenstände
 
 ## Voraussetzungen
@@ -105,6 +105,7 @@ bereitgestellt.
 Die ABW-App liest diese Datei im Container standardmäßig aus:
 
 - `/app/data/db_config.local.json`
+- `/app/data/sensor_cache.duckdb`
 
 Zusätzlich ist `abw.vobenconsulting.com` über Authentik per Forward Auth abgesichert.
 
@@ -164,7 +165,9 @@ Für `nodeTypeName` werden mehrere Alias-Namen toleriert, darunter:
 
 ## Cache-Verhalten
 
-Wenn `Use local cache (DuckDB)` aktiviert ist, liest die App bevorzugt aus `sensor_cache.duckdb` und schreibt frisch geladene Daten dort hinein.
+Wenn `Use local cache (DuckDB)` aktiviert ist, liest die App bevorzugt aus `data/sensor_cache.duckdb` und schreibt frisch geladene Daten dort hinein.
+
+Vorhandene ältere Caches in der Projektwurzel (`sensor_cache.duckdb`) werden beim Start automatisch nach `data/sensor_cache.duckdb` migriert.
 
 Wenn `Use cache only (no DB fetch)` aktiviert ist:
 
@@ -176,7 +179,7 @@ Wenn `Use cache only (no DB fetch)` aktiviert ist:
 
 - Die App mischt derzeit deutsche Kommentare mit englischer UI. Das ist funktional unkritisch, aber dokumentationsrelevant.
 - Historische Versionen sind nur noch als Referenz unter `legacy/` abgelegt.
-- Die Datei `sensor_cache.duckdb` kann sehr groß werden und gehört nicht in ein Git-Repository.
+- Die Datei `data/sensor_cache.duckdb` kann sehr groß werden und gehört nicht in ein Git-Repository.
 - Lokale DB-Zugangsdaten gehören in `db_config.local.json` oder in Umgebungsvariablen, nicht ins Repository.
 
 ## Empfohlener Git-Umfang
@@ -186,7 +189,7 @@ Ins Repository sollten nur Quelltexte und Projektdateien aufgenommen werden. Nic
 - `.venv/`
 - `portable_python/`
 - `wheelhouse/`
-- `sensor_cache.duckdb`
+- `data/sensor_cache.duckdb`
 - `run_log.txt`
 - `db_config.local.json`
 - `__pycache__/`
