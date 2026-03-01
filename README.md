@@ -95,6 +95,7 @@ Relevante Dateien:
 - `deploy/proxy/Caddyfile`
 - `deploy/abw/docker-compose.yml`
 - `deploy/auth/docker-compose.yml`
+- `deploy/replica/docker-compose.yml`
 
 Die produktive DB-Konfiguration wird nicht committed, sondern serverseitig als:
 
@@ -108,6 +109,23 @@ Die ABW-App liest diese Datei im Container standardmäßig aus:
 - `/app/data/sensor_cache.duckdb`
 
 Zusätzlich ist `abw.vobenconsulting.com` über Authentik per Forward Auth abgesichert.
+
+## Replica-Setup
+
+Für Weiterentwicklung und eigene Berechnungen ist ein getrenntes Replica-Setup vorgesehen:
+
+- `abw_replica`: lokale PostgreSQL-Zieldatenbank auf dem Hetzner-Server
+- `public`: synchronisierte Kopie der Quelltabellen `nodes_hierarchy`, `nodes_history`, `nodes_history_env`
+- `abw_app`: separates Schema für eigene Views, Materialisierungen und Hilfstabellen
+
+Die Synchronisation läuft als eigener Container und zieht die Quelltabellen in festen Intervallen nach. Da der aktuelle Azure-Postgres-Login keine Replikationsrechte besitzt, handelt es sich technisch um eine inkrementelle Pull-Synchronisation, nicht um native PostgreSQL-Streaming-Replikation.
+
+Relevante Dateien:
+
+- `Dockerfile.sync`
+- `scripts/sync_abw_replica.py`
+- `deploy/replica/docker-compose.yml`
+- `deploy/replica/.env.example`
 
 ## Konfiguration
 

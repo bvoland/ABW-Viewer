@@ -1,0 +1,60 @@
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: abw-replica-db
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-abw_replica}
+      POSTGRES_USER: ${POSTGRES_USER:-abw_replica}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?replica password required}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    volumes:
+      - ./postgres:/var/lib/postgresql/data
+    networks:
+      default:
+      web:
+        aliases:
+          - abw-replica-db
+
+  sync:
+    build:
+      context: ../repo
+      dockerfile: Dockerfile.sync
+    container_name: abw-replica-sync
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    env_file:
+      - .env
+    environment:
+      ABW_SOURCE_CONFIG: /source-config/db_config.local.json
+      ABW_TARGET_HOST: db
+      ABW_TARGET_PORT: 5432
+      ABW_TARGET_NAME: ${POSTGRES_DB:-abw_replica}
+      ABW_TARGET_USER: ${POSTGRES_USER:-abw_replica}
+      ABW_TARGET_PASS: ${POSTGRES_PASSWORD:?replica password required}
+      ABW_SYNC_INTERVAL_SECONDS: ${ABW_SYNC_INTERVAL_SECONDS:-900}
+      ABW_SYNC_OVERLAP_HOURS: ${ABW_SYNC_OVERLAP_HOURS:-336}
+      ABW_SYNC_CHUNK_SIZE: ${ABW_SYNC_CHUNK_SIZE:-50000}
+    volumes:
+      - ../abw/data:/source-config:ro
+    command:
+      - /bin/sh
+      - -lc
+      - |
+        while true; do
+          python /app/scripts/sync_abw_replica.py
+          sleep "${ABW_SYNC_INTERVAL_SECONDS}"
+        done
+
+networks:
+  web:
+    external: true
