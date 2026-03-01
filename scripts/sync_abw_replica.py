@@ -2,7 +2,6 @@ import datetime as dt
 import io
 import json
 import os
-import sys
 from typing import Iterable
 
 import pandas as pd
@@ -17,7 +16,7 @@ BASELINE_TS = dt.datetime(1900, 1, 1)
 
 
 def log(message: str) -> None:
-    print(f"[{dt.datetime.utcnow().isoformat()}Z] {message}", flush=True)
+    print(f"[{dt.datetime.now(dt.UTC).isoformat()}] {message}", flush=True)
 
 
 def require_env(name: str) -> str:
@@ -132,6 +131,20 @@ def ensure_target_layout(target_engine, source_columns_by_table: dict[str, list[
             details TEXT
         )
         """,
+        """
+        CREATE TABLE IF NOT EXISTS abw_app.sync_state (
+            table_name TEXT PRIMARY KEY,
+            sync_mode TEXT NOT NULL,
+            run_status TEXT NOT NULL DEFAULT 'idle',
+            last_started_at TIMESTAMPTZ,
+            last_finished_at TIMESTAMPTZ,
+            last_rows_loaded BIGINT NOT NULL DEFAULT 0,
+            source_max_timestamp TIMESTAMP,
+            target_max_timestamp TIMESTAMP,
+            next_cutoff_timestamp TIMESTAMP,
+            last_error TEXT
+        )
+        """,
     ]
     for table, columns in source_columns_by_table.items():
         defs = []
@@ -198,10 +211,34 @@ def begin_run(target_engine, table: str, mode: str) -> int:
             ),
             {"table_name": table, "mode": mode},
         ).scalar_one()
+        conn.execute(
+            text(
+                """
+                INSERT INTO abw_app.sync_state (table_name, sync_mode, run_status, last_started_at, last_error)
+                VALUES (:table_name, :sync_mode, 'running', NOW(), '')
+                ON CONFLICT (table_name) DO UPDATE
+                SET sync_mode = EXCLUDED.sync_mode,
+                    run_status = 'running',
+                    last_started_at = NOW(),
+                    last_error = ''
+                """
+            ),
+            {"table_name": table, "sync_mode": mode},
+        )
     return int(run_id)
 
 
-def finish_run(target_engine, run_id: int, rows_loaded: int, status: str, details: str = "") -> None:
+def finish_run(
+    target_engine,
+    run_id: int,
+    table: str,
+    rows_loaded: int,
+    status: str,
+    details: str = "",
+    source_max_timestamp=None,
+    target_max_timestamp=None,
+    next_cutoff_timestamp=None,
+) -> None:
     with target_engine.begin() as conn:
         conn.execute(
             text(
@@ -221,6 +258,35 @@ def finish_run(target_engine, run_id: int, rows_loaded: int, status: str, detail
                 "details": details[:4000],
             },
         )
+        conn.execute(
+            text(
+                """
+                UPDATE abw_app.sync_state
+                SET run_status = :status,
+                    last_finished_at = NOW(),
+                    last_rows_loaded = :rows_loaded,
+                    source_max_timestamp = :source_max_timestamp,
+                    target_max_timestamp = :target_max_timestamp,
+                    next_cutoff_timestamp = :next_cutoff_timestamp,
+                    last_error = CASE WHEN :status = 'failed' THEN :details ELSE '' END
+                WHERE table_name = :table_name
+                """
+            ),
+            {
+                "table_name": table,
+                "status": status,
+                "rows_loaded": rows_loaded,
+                "source_max_timestamp": source_max_timestamp,
+                "target_max_timestamp": target_max_timestamp,
+                "next_cutoff_timestamp": next_cutoff_timestamp,
+                "details": details[:4000],
+            },
+        )
+
+
+def fetch_max_timestamp(engine, table: str):
+    with engine.connect() as conn:
+        return conn.execute(text(f'SELECT MAX("timestamp") FROM {qname("public", table)}')).scalar()
 
 
 def sync_full_table(source_engine, target_engine, table: str, columns: list[dict], chunk_size: int) -> None:
@@ -238,10 +304,19 @@ def sync_full_table(source_engine, target_engine, table: str, columns: list[dict
             log(f"{table}: loaded {row_count} rows")
         with target_engine.begin() as conn:
             conn.execute(text(f"ANALYZE {qname('public', table)}"))
-        finish_run(target_engine, run_id, row_count, "success")
+        finish_run(
+            target_engine,
+            run_id,
+            table,
+            row_count,
+            "success",
+            source_max_timestamp=None,
+            target_max_timestamp=None,
+            next_cutoff_timestamp=None,
+        )
         log(f"Full refresh for {table} finished with {row_count} rows")
     except Exception as exc:
-        finish_run(target_engine, run_id, row_count, "failed", str(exc))
+        finish_run(target_engine, run_id, table, row_count, "failed", str(exc))
         raise
 
 
@@ -257,14 +332,13 @@ def sync_incremental_table(
     run_id = begin_run(target_engine, table, "incremental")
     row_count = 0
     try:
-        with target_engine.connect() as conn:
-            max_ts = conn.execute(
-                text(f'SELECT MAX("timestamp") FROM {qname("public", table)}')
-            ).scalar()
+        max_ts = fetch_max_timestamp(target_engine, table)
         if max_ts is None:
             cutoff = BASELINE_TS
         else:
             cutoff = max_ts - dt.timedelta(hours=overlap_hours)
+            if cutoff < BASELINE_TS:
+                cutoff = BASELINE_TS
 
         log(f"Incremental sync for {table} started from cutoff {cutoff.isoformat(sep=' ')}")
         with target_engine.begin() as conn:
@@ -287,10 +361,32 @@ def sync_incremental_table(
             log(f"{table}: loaded {row_count} rows since cutoff")
         with target_engine.begin() as conn:
             conn.execute(text(f"ANALYZE {qname('public', table)}"))
-        finish_run(target_engine, run_id, row_count, "success", f"cutoff={cutoff.isoformat()}")
+        source_max_ts = fetch_max_timestamp(source_engine, table)
+        target_max_ts = fetch_max_timestamp(target_engine, table)
+        finish_run(
+            target_engine,
+            run_id,
+            table,
+            row_count,
+            "success",
+            f"cutoff={cutoff.isoformat()}",
+            source_max_timestamp=source_max_ts,
+            target_max_timestamp=target_max_ts,
+            next_cutoff_timestamp=target_max_ts or cutoff,
+        )
         log(f"Incremental sync for {table} finished with {row_count} rows")
     except Exception as exc:
-        finish_run(target_engine, run_id, row_count, "failed", str(exc))
+        finish_run(
+            target_engine,
+            run_id,
+            table,
+            row_count,
+            "failed",
+            str(exc),
+            source_max_timestamp=None,
+            target_max_timestamp=fetch_max_timestamp(target_engine, table),
+            next_cutoff_timestamp=cutoff if "cutoff" in locals() else None,
+        )
         raise
 
 
@@ -298,7 +394,7 @@ def main() -> int:
     source_engine = create_engine(build_url(load_source_settings()), pool_pre_ping=True)
     target_engine = create_engine(build_url(load_target_settings()), pool_pre_ping=True)
     chunk_size = int(os.getenv("ABW_SYNC_CHUNK_SIZE", "50000"))
-    overlap_hours = int(os.getenv("ABW_SYNC_OVERLAP_HOURS", "336"))
+    overlap_hours = int(os.getenv("ABW_SYNC_OVERLAP_HOURS", "0"))
 
     source_columns_by_table = {table: fetch_columns(source_engine, table) for table in SOURCE_TABLES}
     ensure_target_layout(target_engine, source_columns_by_table)

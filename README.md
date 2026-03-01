@@ -120,12 +120,47 @@ Für Weiterentwicklung und eigene Berechnungen ist ein getrenntes Replica-Setup 
 
 Die Synchronisation läuft als eigener Container und zieht die Quelltabellen in festen Intervallen nach. Da der aktuelle Azure-Postgres-Login keine Replikationsrechte besitzt, handelt es sich technisch um eine inkrementelle Pull-Synchronisation, nicht um native PostgreSQL-Streaming-Replikation.
 
+Für `nodes_history` und `nodes_history_env` wird standardmäßig ab dem letzten bereits in `abw_replica` vorhandenen Zeitstempel weiter synchronisiert. Das passt zu unregelmäßig aktualisierten Quelldatenbanken. Ein optionaler Overlap kann über `ABW_SYNC_OVERLAP_HOURS` konfiguriert werden, falls bewusst ältere Korrekturen erneut eingezogen werden sollen.
+
 Relevante Dateien:
 
 - `Dockerfile.sync`
 - `scripts/sync_abw_replica.py`
 - `deploy/replica/docker-compose.yml`
 - `deploy/replica/.env.example`
+
+Status und letzter Datenstand liegen in:
+
+- `abw_app.sync_runs`: einzelne Läufe mit Status und Zeilenzahl
+- `abw_app.sync_state`: aktueller Stand je Tabelle mit letztem erfolgreichen Datenstand
+
+Beispielabfragen:
+
+```sql
+SELECT
+  table_name,
+  run_status,
+  last_finished_at,
+  source_max_timestamp,
+  target_max_timestamp,
+  next_cutoff_timestamp,
+  last_rows_loaded
+FROM abw_app.sync_state
+ORDER BY table_name;
+```
+
+```sql
+SELECT
+  table_name,
+  started_at,
+  finished_at,
+  rows_loaded,
+  status,
+  details
+FROM abw_app.sync_runs
+ORDER BY id DESC
+LIMIT 20;
+```
 
 ## Konfiguration
 
